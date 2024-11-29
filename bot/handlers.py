@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.filters import Command, Text
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -42,7 +42,7 @@ class GetAssignmentStates(StatesGroup):
     waiting_for_code = State()
 
 
-@user_router.message(Text("Получить задание"))
+@user_router.message(F.text == "Получить задание")
 async def get_assignment(message: Message, state: FSMContext):
     """
     Обработчик нажатия на кнопку "Получить задание".
@@ -135,7 +135,7 @@ async def receive_code(message: Message, state: FSMContext):
     await state.clear()
 
 
-@user_router.message(Text("Мой прогресс"))
+@user_router.message(F.text == "Мой прогресс")
 async def show_progress(message: Message):
     """
     Обработчик нажатия на кнопку "Мой прогресс".
@@ -145,7 +145,7 @@ async def show_progress(message: Message):
         result = await session.execute(
             select(Assignment.topic, Assignment.description)
             .join(Progress, Assignment.id == Progress.assignment_id)
-            .where(Progress.user_id == message.from_user.id, Progress.is_completed == True)
+            .where(Progress.user_id == message.from_user.id, Progress.is_completed.is_(True))
         )
         completed_assignments = result.fetchall()
     if completed_assignments:

@@ -11,6 +11,8 @@ async def check_user_solution(user_code, tests_code):
     code_dir = os.path.join(TEMP_DIR, run_id)
     os.makedirs(code_dir, exist_ok=True)
 
+    runner_path = None
+
     try:
         # Создаем файл runner.py с кодом пользователя и тестами
         runner_code = f"""
