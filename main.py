@@ -13,10 +13,8 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Инициализация базы данных
     await init_db()
 
-    # Регистрация обработчиков
     register_handlers(dp)
 
     # Запуск бота
