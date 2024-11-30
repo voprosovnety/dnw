@@ -1,3 +1,5 @@
+import os
+
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -8,7 +10,7 @@ from bot.keyboard import main_menu_keyboard, topics_keyboard
 from bot.utils import check_user_solution
 from database.db import Session
 from sqlalchemy import select
-from database.models import User, Assignment, Progress
+from database.models import User, Progress
 from config import ADMIN_ID
 
 # Инициализация роутеров
@@ -48,86 +50,96 @@ async def get_assignment(message: Message, state: FSMContext):
     Обработчик нажатия на кнопку "Получить задание".
     Показывает пользователю список доступных тем.
     """
-    keyboard = await topics_keyboard()
+    keyboard = topics_keyboard()
     await message.answer("Выберите тему:", reply_markup=keyboard)
     await state.set_state(GetAssignmentStates.waiting_for_topic)
 
 
-@user_router.message(GetAssignmentStates.waiting_for_topic)
-async def select_topic(message: Message, state: FSMContext):
-    """
-    Обработчик выбора темы.
-    Показывает список заданий по выбранной теме.
-    """
-    selected_topic = message.text
-    async with Session() as session:
-        result = await session.execute(
-            select(Assignment).where(Assignment.topic == selected_topic)
-        )
-        assignments = result.scalars().all()
+@user_router.callback_query(GetAssignmentStates.waiting_for_topic, F.data.startswith("topic:"))
+async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
+    selected_topic = callback.data.split(":", 1)[1]
+    assignments_path = os.path.join('assignments', selected_topic)
+    assignments = next(os.walk(assignments_path))[1]  # Получаем список папок заданий в теме
+
     if assignments:
         keyboard = InlineKeyboardBuilder()
         for assignment in assignments:
-            keyboard.button(text=f"Задание {assignment.id}", callback_data=f"assignment:{assignment.id}")
+            keyboard.button(
+                text=f"{assignment}",
+                callback_data=f"assignment:{selected_topic}:{assignment}"
+            )
         keyboard.adjust(1)
-        await message.answer("Выберите задание:", reply_markup=keyboard.as_markup())
+        await callback.message.edit_text("Выберите задание:", reply_markup=keyboard.as_markup())
         await state.set_state(GetAssignmentStates.waiting_for_assignment)
         await state.update_data(selected_topic=selected_topic)
     else:
-        await message.answer("К сожалению, заданий по этой теме нет.", reply_markup=main_menu_keyboard())
+        await callback.message.edit_text("К сожалению, заданий по этой теме нет.")
+        await callback.message.answer(
+            "Вы можете воспользоваться главным меню:",
+            reply_markup=main_menu_keyboard()
+        )
         await state.clear()
+    await callback.answer()
 
 
 @user_router.callback_query(GetAssignmentStates.waiting_for_assignment, F.data.startswith("assignment:"))
 async def send_assignment(callback: CallbackQuery, state: FSMContext):
-    """
-    Обработчик выбора задания.
-    Отправляет описание задания и запрашивает решение пользователя.
-    """
-    assignment_id = int(callback.data.split(":")[1])
-    async with Session() as session:
-        assignment = await session.get(Assignment, assignment_id)
-    if assignment:
-        await state.update_data(current_assignment_id=assignment.id)
+    _, selected_topic, assignment_name = callback.data.split(":", 2)
+    assignment_path = os.path.join('assignments', selected_topic, assignment_name)
+    description_file = os.path.join(assignment_path, 'description.txt')
+    tests_file = os.path.join(assignment_path, 'tests.py')
+
+    if os.path.exists(description_file) and os.path.exists(tests_file):
+        # Читаем описание задания
+        with open(description_file, 'r', encoding='utf-8') as f:
+            description = f.read()
+
+        # Читаем тесты
+        with open(tests_file, 'r', encoding='utf-8') as f:
+            tests_code = f.read()
+
+        await state.update_data(current_assignment={
+            'topic': selected_topic,
+            'name': assignment_name,
+            'tests_code': tests_code
+        })
+        await callback.message.edit_text(
+            f"Задание по теме '{selected_topic}':\n{description}\n\nОтправьте ваше решение:"
+        )
         await callback.message.answer(
-            f"Задание по теме '{assignment.topic}':\n{assignment.description}\n\nОтправьте ваше решение:",
+            "Вы можете воспользоваться главным меню:",
             reply_markup=main_menu_keyboard()
         )
         await state.set_state(GetAssignmentStates.waiting_for_code)
-        await callback.answer()
     else:
         await callback.message.answer("Задание не найдено.", reply_markup=main_menu_keyboard())
         await state.clear()
-        await callback.answer()
+    await callback.answer()
 
 
 @user_router.message(GetAssignmentStates.waiting_for_code)
 async def receive_code(message: Message, state: FSMContext):
-    """
-    Обработчик получения кода от пользователя.
-    Проверяет решение и обновляет прогресс.
-    """
     user_code = message.text
     data = await state.get_data()
-    assignment_id = data.get("current_assignment_id")
+    current_assignment = data.get("current_assignment")
 
-    if not assignment_id:
+    if not current_assignment:
         await message.answer("Сначала получите задание командой 'Получить задание'.")
         await state.clear()
         return
 
-    async with Session() as session:
-        assignment = await session.get(Assignment, assignment_id)
-        tests_code = assignment.tests_code
+    tests_code = current_assignment['tests_code']
 
     result = await check_user_solution(user_code, tests_code)
     await message.answer(result)
-    # Обновление прогресса пользователя
-    if "✅ Ваше решение верно!" in result:
+    if "Ваше решение верно!" in result:
+        data = await state.get_data()
+        current_assignment = data.get("current_assignment")
         async with Session() as session:
             progress = Progress(
                 user_id=message.from_user.id,
-                assignment_id=assignment_id,
+                topic=current_assignment['topic'],
+                assignment_name=current_assignment['name'],
                 is_completed=True
             )
             session.add(progress)
@@ -137,21 +149,16 @@ async def receive_code(message: Message, state: FSMContext):
 
 @user_router.message(F.text == "Мой прогресс")
 async def show_progress(message: Message):
-    """
-    Обработчик нажатия на кнопку "Мой прогресс".
-    Показывает пользователю список выполненных заданий.
-    """
     async with Session() as session:
         result = await session.execute(
-            select(Assignment.topic, Assignment.description)
-            .join(Progress, Assignment.id == Progress.assignment_id)
+            select(Progress.topic, Progress.assignment_name)
             .where(Progress.user_id == message.from_user.id, Progress.is_completed.is_(True))
         )
         completed_assignments = result.fetchall()
     if completed_assignments:
         response = "Вы успешно выполнили следующие задания:\n\n"
-        for topic, description in completed_assignments:
-            response += f"Тема: {topic}\nЗадание: {description}\n\n"
+        for topic, assignment_name in completed_assignments:
+            response += f"Тема: {topic}\nЗадание: {assignment_name}\n\n"
     else:
         response = "Вы ещё не выполнили ни одного задания."
     await message.answer(response)

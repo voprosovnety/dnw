@@ -48,16 +48,16 @@ if __name__ == '__main__':
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
         except asyncio.TimeoutError:
             process.kill()
-            return "❌ Превышено время выполнения (5 секунд)."
+            return "Превышено время выполнения (5 секунд)."
 
         if process.returncode == 0:
-            return "✅ Ваше решение верно!"
+            return "Ваше решение верно!"
         else:
             error_message = stderr.decode().strip()
-            return f"❌ Тест не пройден:\n{error_message}"
+            return f"Тест не пройден:\n{error_message}"
 
     except Exception as e:
-        return f"⚠️ Ошибка при выполнении кода: {e}"
+        return f"Ошибка при выполнении кода: {e}"
     finally:
         # Удаляем временные файлы
         try:
