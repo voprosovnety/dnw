@@ -11,6 +11,7 @@ def main_menu_keyboard():
     keyboard_builder = ReplyKeyboardBuilder()
     keyboard_builder.button(text="Получить задание")
     keyboard_builder.button(text="Мой прогресс")
+    keyboard_builder.button(text="Как отправлять решения?")
     keyboard_builder.adjust(2)  # Располагаем кнопки в один ряд (2 кнопки в строке)
     return keyboard_builder.as_markup(resize_keyboard=True)
 

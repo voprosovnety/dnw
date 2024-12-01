@@ -1,3 +1,4 @@
+import logging
 import os
 
 from aiogram import Router, F
@@ -11,16 +12,13 @@ from bot.utils import check_user_solution
 from database.db import Session
 from sqlalchemy import select
 from database.models import User, Progress
-from config import ADMIN_ID
 
-# Инициализация роутеров
-user_router = Router()
-admin_router = Router()
+router = Router()
+
+logger = logging.getLogger(__name__)
 
 
-# --- Хендлеры для пользователей ---
-
-@user_router.message(Command("start"))
+@router.message(Command("start"))
 async def cmd_start(message: Message):
     """
     Обработчик команды /start.
@@ -44,18 +42,14 @@ class GetAssignmentStates(StatesGroup):
     waiting_for_code = State()
 
 
-@user_router.message(F.text == "Получить задание")
+@router.message(F.text == "Получить задание")
 async def get_assignment(message: Message, state: FSMContext):
-    """
-    Обработчик нажатия на кнопку "Получить задание".
-    Показывает пользователю список доступных тем.
-    """
     keyboard = topics_keyboard()
     await message.answer("Выберите тему:", reply_markup=keyboard)
     await state.set_state(GetAssignmentStates.waiting_for_topic)
 
 
-@user_router.callback_query(GetAssignmentStates.waiting_for_topic, F.data.startswith("topic:"))
+@router.callback_query(GetAssignmentStates.waiting_for_topic, F.data.startswith("topic:"))
 async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     selected_topic = callback.data.split(":", 1)[1]
     assignments_path = os.path.join('assignments', selected_topic)
@@ -82,7 +76,7 @@ async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@user_router.callback_query(GetAssignmentStates.waiting_for_assignment, F.data.startswith("assignment:"))
+@router.callback_query(GetAssignmentStates.waiting_for_assignment, F.data.startswith("assignment:"))
 async def send_assignment(callback: CallbackQuery, state: FSMContext):
     _, selected_topic, assignment_name = callback.data.split(":", 2)
     assignment_path = os.path.join('assignments', selected_topic, assignment_name)
@@ -104,11 +98,7 @@ async def send_assignment(callback: CallbackQuery, state: FSMContext):
             'tests_code': tests_code
         })
         await callback.message.edit_text(
-            f"Задание по теме '{selected_topic}':\n{description}\n\nОтправьте ваше решение:"
-        )
-        await callback.message.answer(
-            "Вы можете воспользоваться главным меню:",
-            reply_markup=main_menu_keyboard()
+            f"Задание по теме '{selected_topic}':\n{description}", parse_mode="Markdown"
         )
         await state.set_state(GetAssignmentStates.waiting_for_code)
     else:
@@ -117,9 +107,64 @@ async def send_assignment(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@user_router.message(GetAssignmentStates.waiting_for_code)
+@router.message(GetAssignmentStates.waiting_for_code, F.content_type.in_(['document', 'text']))
 async def receive_code(message: Message, state: FSMContext):
-    user_code = message.text
+    user_code = ''
+    if message.document:
+        # Обработка файлов, как и раньше
+        document = message.document
+        if document.mime_type != 'text/x-python' and not document.file_name.endswith('.py'):
+            await message.answer("Пожалуйста, отправьте файл с расширением .py")
+            return
+        # Проверка размера файла
+        if document.file_size > 1024 * 50:  # Ограничение 50 КБ
+            await message.answer("Файл слишком большой. Пожалуйста, отправьте файл размером не более 50 КБ.")
+            return
+        # Получаем объект файла
+        file_info = await message.bot.get_file(document.file_id)
+        # Задаем путь для сохранения файла
+        destination = os.path.join('temp_code', document.file_name)
+        # Создаем директорию, если ее нет
+        os.makedirs('temp_code', exist_ok=True)
+        # Скачиваем файл
+        await message.bot.download_file(file_info.file_path, destination)
+        # Читаем содержимое файла
+        try:
+            with open(destination, 'r', encoding='utf-8') as f:
+                user_code = f.read()
+        except Exception as e:
+            logger.exception(f"Ошибка при чтении файла от пользователя {message.from_user.id}: {e}")
+            await message.answer(
+                "Не удалось прочитать ваш файл. Убедитесь, что файл не поврежден и имеет правильный формат.")
+            return
+        finally:
+            os.remove(destination)
+    elif message.content_type == 'text':
+        # Проверяем, что текст отформатирован как код
+        if not message.entities:
+            await message.answer(
+                "Пожалуйста, отформатируйте ваш код как 'Monospace' или отправьте файл с расширением .py.")
+            return
+
+        code_entities = [entity for entity in message.entities if entity.type in ('pre', 'code')]
+        if not code_entities:
+            await message.answer(
+                "Пожалуйста, отформатируйте ваш код как 'Monospace' или отправьте файл с расширением .py.")
+            return
+
+        # Извлекаем код из сообщения
+        code_texts = []
+        for entity in code_entities:
+            offset = entity.offset
+            length = entity.length
+            code_texts.append(message.text[offset:offset + length])
+
+        user_code = '\n'.join(code_texts)
+    else:
+        await message.answer(
+            "Пожалуйста, отправьте ваш код в виде файла с расширением .py или отформатированного текста.")
+        return
+
     data = await state.get_data()
     current_assignment = data.get("current_assignment")
 
@@ -131,10 +176,14 @@ async def receive_code(message: Message, state: FSMContext):
     tests_code = current_assignment['tests_code']
 
     result = await check_user_solution(user_code, tests_code)
-    await message.answer(result)
+
+    # Экранируем специальные символы и отправляем результат
+    import html
+    escaped_result = html.escape(result)
+    await message.answer(f"<pre>{escaped_result}</pre>", parse_mode='HTML')
+
+    # Обновление прогресса пользователя
     if "Ваше решение верно!" in result:
-        data = await state.get_data()
-        current_assignment = data.get("current_assignment")
         async with Session() as session:
             progress = Progress(
                 user_id=message.from_user.id,
@@ -147,7 +196,12 @@ async def receive_code(message: Message, state: FSMContext):
     await state.clear()
 
 
-@user_router.message(F.text == "Мой прогресс")
+@router.message(GetAssignmentStates.waiting_for_code)
+async def unknown_message(message: Message):
+    await message.answer("Пожалуйста, отправьте ваш код в виде файла с расширением .py или отформатированного текста.")
+
+
+@router.message(F.text == "Мой прогресс")
 async def show_progress(message: Message):
     async with Session() as session:
         result = await session.execute(
@@ -164,76 +218,39 @@ async def show_progress(message: Message):
     await message.answer(response)
 
 
-# --- Хендлеры для администратора ---
-
-class AddAssignmentStates(StatesGroup):
-    waiting_for_topic = State()
-    waiting_for_description = State()
-    waiting_for_tests = State()
-
-
-@admin_router.message(Command("add_assignment"))
-async def cmd_add_assignment(message: Message, state: FSMContext):
-    """
-    Обработчик команды /add_assignment.
-    Начинает процесс добавления нового задания.
-    """
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("У вас нет прав для этой команды.")
-        return
-    await message.answer("Введите тему задания:")
-    await state.set_state(AddAssignmentStates.waiting_for_topic)
-
-
-@admin_router.message(AddAssignmentStates.waiting_for_topic)
-async def assignment_topic_entered(message: Message, state: FSMContext):
-    """
-    Обрабатывает ввод темы задания.
-    """
-    await state.update_data(topic=message.text)
-    await message.answer("Введите описание задания:")
-    await state.set_state(AddAssignmentStates.waiting_for_description)
-
-
-@admin_router.message(AddAssignmentStates.waiting_for_description)
-async def assignment_description_entered(message: Message, state: FSMContext):
-    """
-    Обрабатывает ввод описания задания.
-    """
-    await state.update_data(description=message.text)
+@router.message(F.text == "Как отправлять решения?")
+async def faq(message: Message):
     await message.answer(
-        "Отправьте тесты для задания (в виде кода).\n"
-        "Функция тестирования должна называться `test_solution`:"
+        """
+Вы можете отправлять свои решения двумя способами:
+
+1. **Файлом с расширением `.py`**
+
+   - Создайте файл с расширением `.py`, содержащий вашу функцию `solution`.
+   - Отправьте этот файл боту.
+
+2. **Текстовым сообщением, отформатированным как код**
+
+   - Вставьте ваш код в текстовое сообщение.
+   - Выделите весь код(`Ctrl+A`).
+   - Нажмите `Ctrl+Shift+M` (или `Cmd+Shift+M` на Mac) для форматирования текста в Monospace.
+   
+Пример содержания файла или сообщения:
+```python
+def solution(a):
+    return a
+```
+
+**Важно:** Ваш код должен содержать **только** определение функции `solution`. 
+Пожалуйста, не добавляйте дополнительный текст или комментарии.
+
+Если у вас возникнут вопросы или проблемы, не стесняйтесь обращаться за помощью!
+        """,
+        parse_mode="Markdown"
     )
-    await state.set_state(AddAssignmentStates.waiting_for_tests)
-
-
-@admin_router.message(AddAssignmentStates.waiting_for_tests)
-async def assignment_tests_entered(message: Message, state: FSMContext):
-    """
-    Обрабатывает ввод тестов для задания.
-    Сохраняет задание в базе данных.
-    """
-    data = await state.get_data()
-    topic = data['topic']
-    description = data['description']
-    tests_code = message.text
-
-    # Сохраняем задание в базу данных
-    async with Session() as session:
-        assignment = Assignment(
-            topic=topic,
-            description=description,
-            tests_code=tests_code
-        )
-        session.add(assignment)
-        await session.commit()
-    await message.answer("Задание успешно добавлено!")
-    await state.clear()
 
 
 # --- Регистрация всех хендлеров ---
 
 def register_handlers(dp):
-    dp.include_router(user_router)
-    dp.include_router(admin_router)
+    dp.include_router(router)
