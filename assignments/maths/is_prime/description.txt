@@ -1,0 +1,11 @@
+Task: Write a function `is_prime(n)` that returns `True` if the number `n` is a prime number, and `False` otherwise.
+
+Example:
+
+    is_prime(2) -> True
+    is_prime(4) -> False
+
+Requirements:
+- The function must be named exactly `is_prime`
+- Do not use external libraries
+- Return boolean values only

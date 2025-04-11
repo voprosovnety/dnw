@@ -9,6 +9,7 @@ from config import BOT_TOKEN
 from bot.handlers import register_handlers
 from database.db import init_db
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -20,15 +21,16 @@ logging.basicConfig(
 
 
 async def main():
+    """
+    Initializes and runs the Telegram bot with dispatcher and handlers.
+    """
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
     await init_db()
-
     register_handlers(dp)
 
-    # Запуск бота
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

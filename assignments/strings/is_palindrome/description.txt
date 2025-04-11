@@ -1,0 +1,15 @@
+Task: Write a function `is_palindrome(s)` that returns `True` if the string `s` is a palindrome (i.e., it reads the same forwards and backwards), and `False` otherwise.
+
+Ignore case and spaces.
+
+Examples:
+
+    is_palindrome("racecar") -> True
+    is_palindrome("RaceCar") -> True
+    is_palindrome("hello")   -> False
+    is_palindrome("A man a plan a canal Panama") -> True
+
+Requirements:
+- The function must be named exactly `is_palindrome`
+- Do not use external libraries
+- Ignore spaces and case

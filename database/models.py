@@ -2,14 +2,21 @@ from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from database.db import Base
 
+
 class User(Base):
+    """
+    Represents a Telegram user.
+    """
     __tablename__ = 'users'
 
     telegram_id = Column(Integer, primary_key=True)
-
     progress = relationship('Progress', back_populates='user')
 
+
 class Progress(Base):
+    """
+    Tracks which assignments a user has completed.
+    """
     __tablename__ = 'progress'
 
     id = Column(Integer, primary_key=True)

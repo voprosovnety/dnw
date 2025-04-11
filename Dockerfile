@@ -1,16 +1,14 @@
 FROM python:3.12-slim
 
-# Устанавливаем дополнительные пакеты, если необходимо
-# RUN apt-get update && apt-get install -y ...
-
-# Создаем пользователя без прав root
+# Create non-root user for safer execution
 RUN useradd -ms /bin/bash runner
 
 USER runner
 WORKDIR /home/runner
 
-# Копируем файлы, если необходимо
-# COPY requirements.txt .
-# RUN pip install -r requirements.txt
+# Prevent Python from writing .pyc files and buffering output
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
+# Default command to run code
 CMD ["python", "runner.py"]

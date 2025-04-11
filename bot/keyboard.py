@@ -5,22 +5,23 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 def main_menu_keyboard():
     """
-    Функция для создания клавиатуры главного меню.
-    Использует ReplyKeyboardBuilder для удобства добавления новых кнопок.
+    Creates the main menu keyboard.
+    Uses ReplyKeyboardBuilder for better layout control.
     """
     keyboard_builder = ReplyKeyboardBuilder()
-    keyboard_builder.button(text="Получить задание")
-    keyboard_builder.button(text="Мой прогресс")
-    keyboard_builder.button(text="Как отправлять решения?")
-    keyboard_builder.adjust(2)  # Располагаем кнопки в один ряд (2 кнопки в строке)
+    keyboard_builder.button(text="Get Assignment")
+    keyboard_builder.button(text="My Progress")
+    keyboard_builder.button(text="How to submit code?")
+    keyboard_builder.adjust(2)
     return keyboard_builder.as_markup(resize_keyboard=True)
 
 
 def topics_keyboard():
     """
-    Функция для создания клавиатуры с темами заданий.
+    Creates an inline keyboard based on folders inside the 'assignments' directory.
+    Each folder represents a topic.
     """
-    topics = next(os.walk('assignments'))[1]  # Получаем список папок в assignments/
+    topics = next(os.walk('assignments'))[1]
     keyboard_builder = InlineKeyboardBuilder()
     for topic in topics:
         keyboard_builder.button(

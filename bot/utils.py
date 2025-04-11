@@ -5,8 +5,17 @@ import uuid
 TEMP_DIR = 'temp_code'
 
 
-async def check_user_solution(user_code, tests_code):
-    # Создаем уникальный идентификатор для каждого запуска
+async def check_user_solution(user_code: str, tests_code: str, function_name: str) -> str:
+    """
+    Evaluates user code by running it inside a Docker container with provided tests.
+
+    Args:
+        user_code (str): The code written by the user (should define a function called 'solution')
+        tests_code (str): Code that tests the 'solution' function using assertions
+
+    Returns:
+        str: Result message, either success or failure with error details.
+    """
     run_id = str(uuid.uuid4())
     code_dir = os.path.join(TEMP_DIR, run_id)
     os.makedirs(code_dir, exist_ok=True)
@@ -14,30 +23,34 @@ async def check_user_solution(user_code, tests_code):
     runner_path = None
 
     try:
-        # Создаем файл runner.py с кодом пользователя и тестами
-        runner_code = f"""
-{user_code}
+        # Create alias so that test_solution(solution) works
+        alias_code = f"solution = {function_name}"
+
+        runner_code = f"""{user_code}
+
+{alias_code}
 
 {tests_code}
 
 if __name__ == '__main__':
     test_solution(solution)
 """
+
         runner_path = os.path.join(code_dir, 'runner.py')
         with open(runner_path, 'w', encoding='utf-8') as f:
             f.write(runner_code)
 
-        # Команда для запуска Docker-контейнера
+        # Define Docker command
         command = [
             'docker', 'run', '--rm',
-            '--cpus', '0.5',  # Ограничение CPU
-            '--memory', '256m',  # Ограничение памяти
-            '--network', 'none',  # Отключаем сеть
+            '--cpus', '0.5',
+            '--memory', '256m',
+            '--network', 'none',
             '-v', f'{os.path.abspath(code_dir)}:/home/runner',
             'code-runner'
         ]
 
-        # Запускаем контейнер и ждем завершения
+        # Run the container
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
@@ -48,18 +61,17 @@ if __name__ == '__main__':
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
         except asyncio.TimeoutError:
             process.kill()
-            return "Превышено время выполнения (5 секунд)."
+            return "⏱ Execution time exceeded the 5-second limit."
 
         if process.returncode == 0:
-            return "Ваше решение верно!"
+            return "✅ Your solution is correct!"
         else:
             error_message = stderr.decode().strip()
-            return f"Тест не пройден:\n{error_message}"
+            return f"❌ Test failed:\n{error_message}"
 
     except Exception as e:
-        return f"Ошибка при выполнении кода: {e}"
+        return f"⚠️ An error occurred while running the code: {e}"
     finally:
-        # Удаляем временные файлы
         try:
             os.remove(runner_path)
             os.rmdir(code_dir)
